@@ -1,0 +1,5 @@
+{
+  "name": "KiotViet Product Chatbot",
+  "description": "Một demo chatbot tư vấn sản phẩm sử dụng Gemini, tích hợp dữ liệu sản phẩm mẫu theo cấu trúc KiotViet.",
+  "requestFramePermissions": []
+}
