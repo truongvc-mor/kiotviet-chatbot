@@ -1,4 +1,15 @@
 import { GoogleGenAI } from "@google/genai";
+// 1. Import trực tiếp data sản phẩm (Thay vì gọi API)
+import { products } from "../data/products";
+
+// 2. Tạo một mảng kiến thức tĩnh (Vì SQLite server không tồn tại trên Vercel)
+const knowledgeData =[
+  { topic: "Chính sách đổi trả", content: "Hỗ trợ đổi trả trong 7 ngày nếu lỗi từ nhà sản xuất. Sản phẩm phải còn nguyên tem mác và hóa đơn." },
+  { topic: "Chính sách vận chuyển", content: "Miễn phí vận chuyển cho đơn hàng từ 500k. Dưới 500k phí ship là 30k toàn quốc." },
+  { topic: "Mẹo bán hàng thời trang", content: "Khuyến khích khách mua thêm phụ kiện như thắt lưng, túi xách để phối đồ. Luôn tư vấn size cẩn thận." },
+  { topic: "Bảo hành đồ điện tử", content: "Bảo hành 12 tháng chính hãng. Khách cần giữ hóa đơn mua hàng trên KiotViet." },
+  { topic: "Chính sách khách hàng thành viên", content: "Thành viên VIP (mua tích lũy trên 10 triệu) được giảm 5% cho mọi đơn hàng. Thành viên VVIP (trên 30 triệu) giảm 10%." }
+];
 
 const SYSTEM_INSTRUCTION = `Bạn là chuyên gia tư vấn bán hàng cao cấp và trợ lý tri thức nội bộ (AI Sales Hub). 
 Nhiệm vụ của bạn là hỗ trợ nhân viên Sale truy xuất thông tin và trả lời khách hàng một cách thông minh, dựa trên HAI nguồn dữ liệu chính:
@@ -16,7 +27,7 @@ CẤU TRÚC PHẢN HỒI (PHẢI TUÂN THỦ):
 (Nếu hỗ trợ khách: Viết đoạn trả lời lịch sự, chuyên nghiệp, lồng ghép khéo léo các sản phẩm. Nếu truy xuất nội bộ: Trình bày thông tin rõ ràng, súc tích).
 
 ### SẢN PHẨM LIÊN QUAN (KiotViet)
-(Liệt kê các sản phẩm phù hợp nhất. Định dạng: - [Mã SP] Tên SP - Giá: [Giá]đ - Tồn: [Số lượng]. Nếu thực sự không có sản phẩm nào liên quan, ghi "Không có sản phẩm liên quan").
+(Liệt kê các sản phẩm phù hợp nhất. Định dạng: -[Mã SP] Tên SP - Giá: [Giá]đ - Tồn: [Số lượng]. Nếu thực sự không có sản phẩm nào liên quan, ghi "Không có sản phẩm liên quan").
 
 ### KIẾN THỨC BỔ TRỢ (Nội bộ)
 (BẮT BUỘC: Trích dẫn các quy định, chính sách, quy trình hoặc mẹo bán hàng từ Context. Đây là phần quan trọng để giúp Sale hiểu rõ nghiệp vụ).
@@ -26,28 +37,25 @@ LƯU Ý:
 - Luôn ưu tiên độ chính xác tuyệt đối của Giá và Tồn kho.`;
 
 export async function chatWithGemini(userMessage: string, isCustomerQuestion: boolean = false) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  // 3. Lấy API Key từ biến môi trường của Vite (import.meta.env) hoặc fallback về cấu hình của vite.config.ts
+  const apiKey = import.meta.env?.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+  
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is missing.");
+    console.error("Lỗi: Không tìm thấy GEMINI_API_KEY. Vui lòng cấu hình Environment Variables.");
+    return "Lỗi hệ thống: Chưa cấu hình GEMINI_API_KEY. Vui lòng báo cho quản trị viên.";
   }
 
   const ai = new GoogleGenAI({ apiKey });
   
-  // 1. Fetch data from local API
-  const [products, knowledge] = await Promise.all([
-    fetch("/api/products").then(res => res.json()),
-    fetch("/api/knowledge").then(res => res.json())
-  ]);
-
-  // 2. Find relevant context (Broaden search for better AI matching)
-  const relevantContext = findRelevantContext(userMessage, products, knowledge);
+  // 4. Tìm kiếm nội dung liên quan trực tiếp từ mảng tĩnh (Không dùng Fetch API nữa)
+  const relevantContext = findRelevantContext(userMessage, products, knowledgeData);
 
   const modeText = isCustomerQuestion ? "CHẾ ĐỘ: HỖ TRỢ TRẢ LỜI KHÁCH HÀNG (Dual Chat)" : "CHẾ ĐỘ: TRUY XUẤT THÔNG TIN";
   const prompt = `${modeText}\n\nContext nội bộ:\n${relevantContext}\n\nYêu cầu từ nhân viên: ${userMessage}`;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash", // Đã đổi sang bản ổn định
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
@@ -58,7 +66,7 @@ export async function chatWithGemini(userMessage: string, isCustomerQuestion: bo
     return response.text || "Không có phản hồi từ hệ thống.";
   } catch (error) {
     console.error("Gemini API Error:", error);
-    return "Lỗi kết nối AI.";
+    return "Lỗi kết nối AI. Vui lòng thử lại sau.";
   }
 }
 
@@ -92,18 +100,17 @@ function findRelevantContext(query: string, products: any[], knowledge: any[]): 
     .map(p => ({ ...p, score: scoreProduct(p) }))
     .filter(p => p.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 25); // Increase limit to 25
+    .slice(0, 25);
 
   const matchedKnowledge = knowledge
     .map(k => ({ ...k, score: scoreKnowledge(k) }))
     .filter(k => k.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 15); // Increase limit to 15
+    .slice(0, 15);
 
-  // If no knowledge matched but query is short, provide some general ones
   let finalKnowledge = matchedKnowledge;
   if (finalKnowledge.length === 0 && knowledge.length > 0) {
-    finalKnowledge = knowledge.slice(0, 5); // Provide top 5 general items if no match
+    finalKnowledge = knowledge.slice(0, 5);
   }
 
   let context = "--- DỮ LIỆU SẢN PHẨM (KiotViet) ---\n";
